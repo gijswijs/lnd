@@ -9,12 +9,14 @@ frameworks like Akka, actors provide a high-level abstraction for building
 robust, concurrent, and distributed systems.
 
 At its core, an actor is an independent unit of computation that encapsulates:
--   **State**: An actor can maintain private state that it alone can modify.
--   **Behavior**: An actor defines how it reacts to messages it receives.
--   **Mailbox**: Each actor has a mailbox to queue incoming messages.
+
+- **State**: An actor can maintain private state that it alone can modify.
+- **Behavior**: An actor defines how it reacts to messages it receives.
+- **Mailbox**: Each actor has a mailbox to queue incoming messages.
 
 Actors communicate exclusively through asynchronous message passing. When an
 actor receives a message, it can:
+
 1.  Send a finite number of messages to other actors.
 2.  Create a finite number of new actors.
 3.  Designate the behavior to be used for the next message it receives (which
@@ -91,7 +93,7 @@ import "github.com/lightningnetwork/lnd/actor"
 // MyRequest is a custom message type.
 type MyRequest struct {
     // Embed BaseMessage to satisfy the Message interface.
-    actor.BaseMessage 
+    actor.BaseMessage
     Data string
 }
 
@@ -110,9 +112,9 @@ func (m *MyResponse) MessageType() string {
     return "MyResponse"
 }
 ```
+
 The `MessageType()` method provides a string representation of the message type,
 which can be useful for debugging or routing.
-
 
 ### Actor Behavior
 
@@ -127,6 +129,7 @@ type ActorBehavior[M Message, R any] interface {
     Receive(actorCtx context.Context, msg M) fn.Result[R]
 }
 ```
+
 The `Receive` method passes in a caller context (useful for shutdown detection)
 and the incoming message. It returns an `fn.Result[R]`, which can encapsulate
 either a successful response of type `R` or an error.
@@ -210,6 +213,7 @@ There are two main ways to send messages using an `ActorRef`:
     actorRef.Tell(context.Background(), requestMsg)
     // The message is now in the actor's mailbox (or will be shortly).
     ```
+
     The `context.Context` passed to `Tell` can be used to cancel the send
     operation if, for example, the actor's mailbox is full and the send would
     block for too long.
@@ -222,6 +226,7 @@ There are two main ways to send messages using an `ActorRef`:
     askMsg := &MyRequest{Data: "A request needing a response"}
     futureResponse := actorRef.Ask(context.Background(), askMsg)
     ```
+
     A `Future[R]` represents a result that will be available at some point. You
     can block until it's ready using `Await`:
 
@@ -231,7 +236,7 @@ There are two main ways to send messages using an `ActorRef`:
     defer cancel()
 
     result := futureResponse.Await(ctx)
-    response, err := result.Unpack() 
+    response, err := result.Unpack()
     if err != nil {
         fmt.Printf("Ask failed: %v\n", err)
         // return or handle error
@@ -239,6 +244,7 @@ There are two main ways to send messages using an `ActorRef`:
         fmt.Printf("Received reply: %s\n", response.Reply)
     }
     ```
+
     The `Future` interface also offers non-blocking ways to handle results, like
     `OnComplete` (for callbacks) and `ThenApply` (for chaining transformations).
     A more restricted `TellOnlyRef[M]` is also available if only fire-and-forget
@@ -271,6 +277,7 @@ This launches a dedicated goroutine for the actor.
 ```go
 sampleActor.Start()
 ```
+
 To stop an actor, you call its `Stop()` method. This cancels the actor's
 internal context, causing its goroutine to clean up and exit.
 
@@ -278,7 +285,6 @@ internal context, causing its goroutine to clean up and exit.
 // Sometime later...
 sampleActor.Stop()
 ```
-
 
 ## Visualizing Actor Relationships
 
@@ -289,26 +295,26 @@ managed, discovered, and interacted with.
 ```mermaid
 classDiagram
     direction TB
-    
+
     class ActorSystem {
       +Receptionist
       +DeadLetters
       +Shutdown()
     }
-    
+
     class Receptionist {
       +Find(ServiceKey) ActorRef[]
       +Register(ServiceKey, ActorRef)
     }
-    
+
     class DeadLetterOffice {
       +Receive(undeliverable Message)
     }
-    
+
     class ServiceKey {
       +Spawn(ActorSystem, Behavior) ActorRef
     }
-    
+
     class Actor {
       -mailbox
       -behavior
@@ -316,43 +322,43 @@ classDiagram
       +Start()
       +Stop()
     }
-    
+
     class ActorRef {
       <<Interface>>
       +Tell(Message)
       +Ask(Message) Future
     }
-    
+
     class Message {
       <<Interface>>
     }
-    
+
     class Future {
       +Await() Result
     }
-    
+
     class Router {
       +Tell(Message)
       +Ask(Message) Future
     }
-    
+
     %% Core system relationships
     ActorSystem *-- Receptionist : has
     ActorSystem *-- DeadLetterOffice : provides
     ActorSystem o-- "manages" Actor
-    
+
     %% Actor and communication
     Actor --> ActorRef : provides
     Actor ..> Message : processes
     ActorRef ..> Message : sends
     ActorRef ..> Future : returns for Ask
-    
+
     %% Service discovery and routing
     Receptionist o-- ServiceKey : uses for lookup
     ServiceKey ..> Actor : creates
     Router --> ActorRef : routes to
     Router --> Receptionist : discovers actors via
-    
+
     note for ActorSystem "Central manager for actor lifecycle and service discovery"
     note for Actor "Independent unit with encapsulated state and behavior"
     note for ActorRef "Location-transparent handle for sending messages"
@@ -379,7 +385,7 @@ The `ActorSystem` can manage the lifecycle of actors. You can register actors
 with the system:
 
 ```go
-// Using 'behavior' from earlier and 'myServiceKey' defined in the 
+// Using 'behavior' from earlier and 'myServiceKey' defined in the
 // "Service Keys and Actor References" section.
 
 // RegisterWithSystem creates, starts, and registers the actor.
@@ -389,6 +395,7 @@ actorRefFromSystem := actor.RegisterWithSystem(
 ```
 
 Alternatively, a `ServiceKey` itself provides a `Spawn` method for convenience:
+
 ```go
 actorRefSpawned := myServiceKey.Spawn(system, "spawned-actor", behavior)
 ```
@@ -418,6 +425,7 @@ if len(foundRefs) > 0 {
     fmt.Println("No actors found for service key:", myServiceKey)
 }
 ```
+
 When an actor is stopped (e.g., via `ServiceKey.Unregister` or system shutdown),
 it should also be unregistered from the receptionist.
 
@@ -472,6 +480,7 @@ serviceRouter.Tell(context.Background(), &MyRequest{Data: "Message via router"})
 futureReplyFromRouter := serviceRouter.Ask(context.Background(), &MyRequest{Data: "Ask via router"})
 // ... await futureReplyFromRouter ...
 ```
+
 If the router cannot find any available actors for the `ServiceKey` (e.g., none
 are registered or running), `Tell` operations will typically send the message to
 the router's configured DLO, and `Ask` operations will return a `Future`
