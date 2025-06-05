@@ -633,7 +633,7 @@ func calculateForwardingAmount(incomingAmount, baseFee lnwire.MilliSatoshi,
 // the hop iterator should contain sphinx router which makes their creations in
 // tests dependent from the sphinx internal parts.
 type OnionProcessor struct {
-	router *sphinx.Router
+	Router *sphinx.Router
 }
 
 // NewOnionProcessor creates new instance of decoder.
@@ -644,7 +644,7 @@ func NewOnionProcessor(router *sphinx.Router) *OnionProcessor {
 // Start spins up the onion processor's sphinx router.
 func (p *OnionProcessor) Start() error {
 	log.Info("Onion processor starting")
-	return p.router.Start()
+	return p.Router.Start()
 }
 
 // Stop shutsdown the onion processor's sphinx router.
@@ -653,7 +653,7 @@ func (p *OnionProcessor) Stop() error {
 	log.Info("Onion processor shutting down...")
 	defer log.Debug("Onion processor shutdown complete")
 
-	p.router.Stop()
+	p.Router.Stop()
 	return nil
 }
 
@@ -693,16 +693,16 @@ func (p *OnionProcessor) ReconstructHopIterator(r io.Reader, rHash []byte,
 	// associated data in order to thwart attempts a replay attacks. In the
 	// case of a replay, an attacker is *forced* to use the same payment
 	// hash twice, thereby losing their money entirely.
-	sphinxPacket, err := p.router.ReconstructOnionPacket(
+	sphinxPacket, err := p.Router.ReconstructOnionPacket(
 		onionPkt, rHash, opts...,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	return makeSphinxHopIterator(p.router, onionPkt, sphinxPacket,
+	return makeSphinxHopIterator(p.Router, onionPkt, sphinxPacket,
 		BlindingKit{
-			Processor:         p.router,
+			Processor:         p.Router,
 			UpdateAddBlinding: blindingInfo.BlindingKey,
 			IncomingAmount:    blindingInfo.IncomingAmt,
 			IncomingCltv:      blindingInfo.IncomingExpiry,
@@ -753,7 +753,7 @@ func (p *OnionProcessor) DecodeHopIterators(id []byte,
 		resps     = make([]DecodeHopIteratorResponse, batchSize)
 	)
 
-	tx := p.router.BeginTxn(id, batchSize)
+	tx := p.Router.BeginTxn(id, batchSize)
 
 	decode := func(seqNum uint16, onionPkt *sphinx.OnionPacket,
 		req DecodeHopIteratorRequest) lnwire.FailCode {
@@ -885,8 +885,8 @@ func (p *OnionProcessor) DecodeHopIterators(id []byte,
 		// Finally, construct a hop iterator from our processed sphinx
 		// packet, simultaneously caching the original onion packet.
 		resp.HopIterator = makeSphinxHopIterator(
-			p.router, &onionPkts[i], &packets[i], BlindingKit{
-				Processor:         p.router,
+			p.Router, &onionPkts[i], &packets[i], BlindingKit{
+				Processor:         p.Router,
 				UpdateAddBlinding: reqs[i].BlindingPoint,
 				IncomingAmount:    reqs[i].IncomingAmount,
 				IncomingCltv:      reqs[i].IncomingCltv,
@@ -906,7 +906,7 @@ func (p *OnionProcessor) ExtractErrorEncrypter(ephemeralKey *btcec.PublicKey) (
 	ErrorEncrypter, lnwire.FailCode) {
 
 	onionObfuscator, err := sphinx.NewOnionErrorEncrypter(
-		p.router, ephemeralKey,
+		p.Router, ephemeralKey,
 	)
 	if err != nil {
 		switch err {
