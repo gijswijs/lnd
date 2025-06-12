@@ -1776,7 +1776,8 @@ out:
 
 // TestSignatureAnnouncementFullProofWhenRemoteProof tests that if a remote
 // proof is received when we already have the full proof, the gossiper will send
-// the full proof (ChannelAnnouncement) to the remote peer.
+// the signature announcement to the remote peer exactly once if it hasn't
+// already done so since reconnecting.
 func TestSignatureAnnouncementFullProofWhenRemoteProof(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1798,7 +1799,7 @@ func TestSignatureAnnouncementFullProofWhenRemoteProof(t *testing.T) {
 	}
 
 	// Override NotifyWhenOnline to return the remote peer which we expect
-	// meesages to be sent to.
+	// messages to be sent to.
 	tCtx.gossiper.reliableSender.cfg.NotifyWhenOnline = func(_ [33]byte,
 		peerChan chan<- lnpeer.Peer) {
 
@@ -1953,9 +1954,9 @@ func TestSignatureAnnouncementFullProofWhenRemoteProof(t *testing.T) {
 	// We expect the gossiper to send this message to the remote peer.
 	select {
 	case msg := <-sentToPeer:
-		_, ok := msg.(*lnwire.ChannelAnnouncement1)
+		_, ok := msg.(*lnwire.AnnounceSignatures1)
 		if !ok {
-			t.Fatalf("expected ChannelAnnouncement1, instead got "+
+			t.Fatalf("expected AnnounceSignatures1, instead got "+
 				"%T", msg)
 		}
 	case <-time.After(2 * time.Second):

@@ -3483,7 +3483,8 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 	if chanInfo.AuthProof != nil {
 		// If we already have the fully assembled proof, then the peer
 		// sending us their proof has probably not received our local
-		// proof yet. So be kind and send them the full proof.
+		// proof yet. So be kind and send them our proof, but only if we
+		// haven't done so since (re)connecting.
 		if nMsg.isRemote {
 			peerID := nMsg.source.SerializeCompressed()
 			log.Debugf("Got AnnounceSignatures for channel with " +
@@ -3501,6 +3502,20 @@ func (d *AuthenticatedGossiper) handleAnnSig(ctx context.Context,
 				ca, _, _, err := netann.CreateChanAnnouncement(
 					chanInfo.AuthProof, chanInfo, e1, e2,
 				)
+
+				proof := &lnwire.AnnounceSignatures1{
+					ChannelID:      ann.ChannelID,
+					ShortChannelID: ann.ShortChannelID,
+				}
+				proof.NodeSignature, err = lnwire.NewSigFromECDSARawSignature(chanInfo.AuthProof.NodeSig1Bytes)
+				if err != nil {
+					return nil, err
+				}
+				proof.BitcoinSignature, err = lnwire.NewSigFromECDSARawSignature(chanInfo.AuthProof.BitcoinSig1Bytes)
+				if err != nil {
+					return nil, err
+				}
+
 				if err != nil {
 					log.Errorf("unable to gen ann: %v",
 						err)
