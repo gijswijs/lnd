@@ -1,4 +1,4 @@
-package graphdb
+package migration1
 
 import (
 	"bytes"
@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/lightningnetwork/lnd/graph/db/models"
+	"github.com/lightningnetwork/lnd/graph/db/migration1/models"
+	"github.com/lightningnetwork/lnd/graph/db/migration1/sqlc"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
 	"github.com/lightningnetwork/lnd/sqldb"
-	"github.com/lightningnetwork/lnd/sqldb/sqlc"
 	"golang.org/x/time/rate"
 )
 
