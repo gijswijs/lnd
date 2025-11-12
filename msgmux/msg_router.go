@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"sync"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/lightningnetwork/lnd/actor"
 	"github.com/lightningnetwork/lnd/fn/v2"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
@@ -73,67 +73,132 @@ type Router interface {
 	Stop()
 }
 
-// sendQuery sends a query to the main event loop, and returns the response.
-func sendQuery[Q any, R any](sendChan chan fn.Req[Q, R], queryArg Q,
-	quit chan struct{}) fn.Result[R] {
-
-	query, respChan := fn.NewReq[Q, R](queryArg)
-
-	if !fn.SendOrQuit(sendChan, query, quit) {
-		return fn.Errf[R]("router shutting down")
-	}
-
-	return fn.NewResult(fn.RecvResp(respChan, nil, quit))
-}
-
-// sendQueryErr is a helper function based on sendQuery that can be used when
-// the query only needs an error response.
-func sendQueryErr[Q any](sendChan chan fn.Req[Q, error], queryArg Q,
-	quitChan chan struct{}) error {
-
-	return fn.ElimEither(
-		sendQuery(sendChan, queryArg, quitChan).Either,
-		fn.Iden, fn.Iden,
-	)
-}
-
 // EndpointsMap is a map of all registered endpoints.
 type EndpointsMap map[EndpointName]Endpoint
+
+// routerActorMsg is a union interface for all router actor messages.
+type routerActorMsg interface {
+	actor.Message
+	isRouterActorMsg()
+}
+
+// registerEndpointMsg is a message to register an endpoint.
+type registerEndpointMsg struct {
+	actor.BaseMessage
+	endpoint Endpoint
+}
+
+// MessageType returns the type name of the message.
+func (m *registerEndpointMsg) MessageType() string { return "registerEndpointMsg" }
+func (m *registerEndpointMsg) isRouterActorMsg()   {}
+
+// unregisterEndpointMsg is a message to unregister an endpoint.
+type unregisterEndpointMsg struct {
+	actor.BaseMessage
+	name EndpointName
+}
+
+// MessageType returns the type name of the message.
+func (m *unregisterEndpointMsg) MessageType() string { return "unregisterEndpointMsg" }
+func (m *unregisterEndpointMsg) isRouterActorMsg()   {}
+
+// routeMsg is a message to route a peer message.
+type routeMsg struct {
+	actor.BaseMessage
+	peerMsg PeerMsg
+}
+
+// MessageType returns the type name of the message.
+func (m *routeMsg) MessageType() string { return "routeMsg" }
+func (m *routeMsg) isRouterActorMsg()   {}
+
+// getEndpointsMsg is a message to get all endpoints.
+type getEndpointsMsg struct {
+	actor.BaseMessage
+}
+
+// MessageType returns the type name of the message.
+func (m *getEndpointsMsg) MessageType() string { return "getEndpointsMsg" }
+func (m *getEndpointsMsg) isRouterActorMsg()   {}
+
+// routerBehavior is the actor behavior for the message router.
+type routerBehavior struct {
+	endpoints map[EndpointName]Endpoint
+}
+
+// Receive handles incoming messages for the router actor.
+func (b *routerBehavior) Receive(ctx context.Context,
+	msg routerActorMsg) fn.Result[any] {
+
+	switch m := msg.(type) {
+	case *registerEndpointMsg:
+		log.Infof("MsgRouter: registering new Endpoint(%s)",
+			m.endpoint.Name())
+
+		if _, ok := b.endpoints[m.endpoint.Name()]; ok {
+			log.Errorf("MsgRouter: rejecting duplicate endpoint: %v",
+				m.endpoint.Name())
+			return fn.Ok[any](ErrDuplicateEndpoint)
+		}
+		b.endpoints[m.endpoint.Name()] = m.endpoint
+		return fn.Ok[any](nil) // nil error
+
+	case *unregisterEndpointMsg:
+		log.Infof("MsgRouter: unregistering Endpoint(%s)", m.name)
+		delete(b.endpoints, m.name)
+		return fn.Ok[any](nil) // nil error
+
+	case *routeMsg:
+		var couldSend bool
+		for _, endpoint := range b.endpoints {
+			if endpoint.CanHandle(m.peerMsg) {
+				log.Tracef("MsgRouter: sending msg %T to endpoint %s",
+					m.peerMsg, endpoint.Name())
+
+				sent := endpoint.SendMessage(ctx, m.peerMsg)
+				couldSend = couldSend || sent
+			}
+		}
+
+		var err error
+		if !couldSend {
+			log.Tracef("MsgRouter: unable to route msg %T",
+				m.peerMsg.Message)
+			err = ErrUnableToRouteMsg
+		}
+		return fn.Ok[any](err)
+
+	case *getEndpointsMsg:
+		endpointsCopy := make(EndpointsMap, len(b.endpoints))
+		maps.Copy(b.endpoints, endpointsCopy)
+		return fn.Ok[any](endpointsCopy)
+
+	default:
+		return fn.Err[any](fmt.Errorf("unknown message type: %T", m))
+	}
+}
 
 // MultiMsgRouter is a type of message router that is capable of routing new
 // incoming messages, permitting a message to be routed to multiple registered
 // endpoints.
 type MultiMsgRouter struct {
-	startOnce sync.Once
-	stopOnce  sync.Once
-
-	// registerChan is the channel that all new endpoints will be sent to.
-	registerChan chan fn.Req[Endpoint, error]
-
-	// unregisterChan is the channel that all endpoints that are to be
-	// removed are sent to.
-	unregisterChan chan fn.Req[EndpointName, error]
-
-	// msgChan is the channel that all messages will be sent to for
-	// processing.
-	msgChan chan fn.Req[PeerMsg, error]
-
-	// endpointsQueries is a channel that all queries to the endpoints map
-	// will be sent to.
-	endpointQueries chan fn.Req[Endpoint, EndpointsMap]
-
-	wg   sync.WaitGroup
-	quit chan struct{}
+	actor *actor.Actor[routerActorMsg, any]
 }
 
 // NewMultiMsgRouter creates a new instance of a peer message router.
 func NewMultiMsgRouter() *MultiMsgRouter {
+	beh := &routerBehavior{
+		endpoints: make(map[EndpointName]Endpoint),
+	}
+	actorCfg := actor.ActorConfig[routerActorMsg, any]{
+		ID:          "msg-router",
+		Behavior:    beh,
+		MailboxSize: 100,
+	}
+	routerActor := actor.NewActor(actorCfg)
+
 	return &MultiMsgRouter{
-		registerChan:    make(chan fn.Req[Endpoint, error]),
-		unregisterChan:  make(chan fn.Req[EndpointName, error]),
-		msgChan:         make(chan fn.Req[PeerMsg, error]),
-		endpointQueries: make(chan fn.Req[Endpoint, EndpointsMap]),
-		quit:            make(chan struct{}),
+		actor: routerActor,
 	}
 }
 
@@ -141,128 +206,86 @@ func NewMultiMsgRouter() *MultiMsgRouter {
 func (p *MultiMsgRouter) Start(ctx context.Context) {
 	log.Infof("Starting Router")
 
-	p.startOnce.Do(func() {
-		p.wg.Add(1)
-		go p.msgRouter(ctx)
-	})
+	p.actor.Start()
 }
 
 // Stop stops the peer message router.
 func (p *MultiMsgRouter) Stop() {
 	log.Infof("Stopping Router")
 
-	p.stopOnce.Do(func() {
-		close(p.quit)
-		p.wg.Wait()
-	})
+	p.actor.Stop()
 }
 
 // RegisterEndpoint registers a new endpoint with the router. If a duplicate
 // endpoint exists, an error is returned.
 func (p *MultiMsgRouter) RegisterEndpoint(endpoint Endpoint) error {
-	return sendQueryErr(p.registerChan, endpoint, p.quit)
+	msg := &registerEndpointMsg{endpoint: endpoint}
+	future := p.actor.Ref().Ask(context.Background(), msg)
+	res := future.Await(context.Background())
+
+	val, err := res.Unpack()
+	if err != nil {
+		return err
+	}
+
+	if typedErr, ok := val.(error); ok {
+		return typedErr
+	}
+
+	return nil
 }
 
 // UnregisterEndpoint unregisters the target endpoint from the router.
 func (p *MultiMsgRouter) UnregisterEndpoint(name EndpointName) error {
-	return sendQueryErr(p.unregisterChan, name, p.quit)
+	msg := &unregisterEndpointMsg{name: name}
+	future := p.actor.Ref().Ask(context.Background(), msg)
+	res := future.Await(context.Background())
+
+	val, err := res.Unpack()
+	if err != nil {
+		return err
+	}
+
+	if typedErr, ok := val.(error); ok {
+		return typedErr
+	}
+
+	return nil
 }
 
 // RouteMsg attempts to route the target message to a registered endpoint. If
 // ANY endpoint could handle the message, then nil is returned.
 func (p *MultiMsgRouter) RouteMsg(msg PeerMsg) error {
-	return sendQueryErr(p.msgChan, msg, p.quit)
+	future := p.actor.Ref().Ask(context.Background(), &routeMsg{peerMsg: msg})
+	res := future.Await(context.Background())
+
+	val, err := res.Unpack()
+	if err != nil {
+		return err
+	}
+
+	if typedErr, ok := val.(error); ok {
+		return typedErr
+	}
+
+	return nil
 }
 
 // Endpoints returns a list of all registered endpoints.
 func (p *MultiMsgRouter) endpoints() fn.Result[EndpointsMap] {
-	return sendQuery(p.endpointQueries, nil, p.quit)
-}
+	future := p.actor.Ref().Ask(context.Background(), &getEndpointsMsg{})
+	res := future.Await(context.Background())
 
-// msgRouter is the main goroutine that handles all incoming messages.
-func (p *MultiMsgRouter) msgRouter(ctx context.Context) {
-	defer p.wg.Done()
-
-	// endpoints is a map of all registered endpoints.
-	endpoints := make(map[EndpointName]Endpoint)
-
-	for {
-		select {
-		// A new endpoint was just sent in, so we'll add it to our set
-		// of registered endpoints.
-		case newEndpointMsg := <-p.registerChan:
-			endpoint := newEndpointMsg.Request
-
-			log.Infof("MsgRouter: registering new "+
-				"Endpoint(%s)", endpoint.Name())
-
-			// If this endpoint already exists, then we'll return
-			// an error as we require unique names.
-			if _, ok := endpoints[endpoint.Name()]; ok {
-				log.Errorf("MsgRouter: rejecting "+
-					"duplicate endpoint: %v",
-					endpoint.Name())
-
-				newEndpointMsg.Resolve(ErrDuplicateEndpoint)
-
-				continue
-			}
-
-			endpoints[endpoint.Name()] = endpoint
-
-			newEndpointMsg.Resolve(nil)
-
-		// A request to unregister an endpoint was just sent in, so
-		// we'll attempt to remove it.
-		case endpointName := <-p.unregisterChan:
-			delete(endpoints, endpointName.Request)
-
-			log.Infof("MsgRouter: unregistering "+
-				"Endpoint(%s)", endpointName.Request)
-
-			endpointName.Resolve(nil)
-
-		// A new message was just sent in. We'll attempt to route it to
-		// all the endpoints that can handle it.
-		case msgQuery := <-p.msgChan:
-			msg := msgQuery.Request
-
-			// Loop through all the endpoints and send the message
-			// to those that can handle it the message.
-			var couldSend bool
-			for _, endpoint := range endpoints {
-				if endpoint.CanHandle(msg) {
-					log.Tracef("MsgRouter: sending "+
-						"msg %T to endpoint %s", msg,
-						endpoint.Name())
-
-					sent := endpoint.SendMessage(ctx, msg)
-					couldSend = couldSend || sent
-				}
-			}
-
-			var err error
-			if !couldSend {
-				log.Tracef("MsgRouter: unable to route "+
-					"msg %T", msg.Message)
-
-				err = ErrUnableToRouteMsg
-			}
-
-			msgQuery.Resolve(err)
-
-		// A query for the endpoint state just came in, we'll send back
-		// a copy of our current state.
-		case endpointQuery := <-p.endpointQueries:
-			endpointsCopy := make(EndpointsMap, len(endpoints))
-			maps.Copy(endpointsCopy, endpoints)
-
-			endpointQuery.Resolve(endpointsCopy)
-
-		case <-p.quit:
-			return
-		}
+	val, err := res.Unpack()
+	if err != nil {
+		return fn.Err[EndpointsMap](err)
 	}
+
+	if endpoints, ok := val.(EndpointsMap); ok {
+		return fn.Ok(endpoints)
+	}
+
+	return fn.Err[EndpointsMap](fmt.Errorf("unexpected response type: %T", val))
 }
 
 // A compile time check to ensure MultiMsgRouter implements the MsgRouter
