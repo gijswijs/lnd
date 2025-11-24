@@ -169,6 +169,143 @@ func testOnionMessageForwarding(ht *lntest.HarnessTest) {
 	ht.CloseChannel(bob, bobCarolChanPoint)
 }
 
+// testOnionMessageForwardingPeerOffline tests forwarding of onion messages
+// when a peer is offline.
+func testOnionMessageForwardingPeerOffline(ht *lntest.HarnessTest) {
+	// Start up a 4 node network: Alice -> Bob -> Carol -> Dave.
+	alice := ht.NewNodeWithCoins("Alice", nil)
+	bob := ht.NewNodeWithCoins("Bob", nil)
+	carol := ht.NewNode("Carol", nil)
+	dave := ht.NewNode("Dave", nil)
+
+	// This will be used to blind the node IDs in the path.
+	blindingKey, err := btcec.NewPrivateKey()
+	require.NoError(ht.T, err)
+
+	sessionKey, err := btcec.NewPrivateKey()
+	require.NoError(ht.T, err)
+
+	// Connect nodes but not bob and carol so that bob cannot forward the
+	// message to carol.
+	ht.ConnectNodesPerm(alice, bob)
+	ht.ConnectNodesPerm(carol, dave)
+
+	// Create a set of 3 blinded hops for our path.
+	hopsToBlind := make([]*sphinx.HopInfo, 3)
+	
+	// Create the route data for each hop.
+	carolPubKey, err := btcec.ParsePubKey(carol.PubKey[:])
+	require.NoError(ht.T, err)
+	data0 := record.NewNonFinalBlindedRouteDataOnionMessage(
+		carolPubKey, nil, nil, nil,
+	)
+	encoded0, err := record.EncodeBlindedRouteData(data0)
+	require.NoError(ht.T, err)
+
+	davePubKey, err := btcec.ParsePubKey(dave.PubKey[:])
+	require.NoError(ht.T, err)
+	data1 := record.NewNonFinalBlindedRouteDataOnionMessage(
+		davePubKey, nil, nil, nil,
+	)
+	encoded1, err := record.EncodeBlindedRouteData(data1)
+	require.NoError(ht.T, err)
+
+	data2 := &record.BlindedRouteData{}
+	encoded2, err := record.EncodeBlindedRouteData(data2)
+	require.NoError(ht.T, err)
+
+	bobPubKey, err := btcec.ParsePubKey(bob.PubKey[:])
+	require.NoError(ht.T, err)
+	
+
+	// The first hop is to Bob from Alice.
+	hopsToBlind[0] = &sphinx.HopInfo{
+		NodePub:   bobPubKey,
+		PlainText: encoded0,
+	}
+
+	// The second hop is to Carol.
+	hopsToBlind[1] = &sphinx.HopInfo{
+		NodePub:   carolPubKey,
+		PlainText: encoded1,
+	}
+
+	// The third hop is to Dave.
+	hopsToBlind[2] = &sphinx.HopInfo{
+		NodePub:   davePubKey,
+		PlainText: encoded2,
+	}
+
+	blindedPath, err := sphinx.BuildBlindedPath(blindingKey, hopsToBlind)
+	require.NoError(ht.T, err)
+
+	finalHopPayload := &lnwire.FinalHopPayload{
+		TLVType: lnwire.InvoiceRequestNamespaceType,
+		Value:   []byte{1, 2, 3},
+	}
+
+	// Convert that blinded path to a sphinx path and add a final payload.
+	sphinxPath, err := blindedToSphinx(
+		blindedPath.Path, nil, nil, []*lnwire.FinalHopPayload{
+			finalHopPayload,
+		},
+	)
+	require.NoError(ht.T, err)
+
+	// Create an onion packet with no associated data.
+	onionPacket, err := sphinx.NewOnionPacket(
+		sphinxPath, sessionKey, nil, sphinx.DeterministicPacketFiller,
+		sphinx.WithMaxPayloadSize(sphinx.MaxRoutingPayloadSize),
+	)
+	require.NoError(ht.T, err, "new onion packet")
+
+	buf := new(bytes.Buffer)
+	err = onionPacket.Encode(buf)
+	require.NoError(ht.T, err, "encode onion packet")
+
+	// Subscribe Dave to onion messages before we send any, so that we
+	// don't miss any.
+	msgClient, cancel := dave.RPC.SubscribeOnionMessages()
+	defer cancel()
+
+	// Create a channel to receive onion messages on.
+	messages := make(chan *lnrpc.OnionMessageUpdate)
+	go func() {
+		for {
+			// If we fail to receive, just exit. The test should
+			// fail elsewhere if it doesn't get a message that it
+			// was expecting.
+			msg, err := msgClient.Recv()
+			if err != nil {
+				return
+			}
+
+			// Deliver the message into our channel or exit if the
+			// test is shutting down.
+			select {
+			case messages <- msg:
+			case <-ht.Context().Done():
+				return
+			}
+		}
+	}()
+
+	pathKey := blindingKey.PubKey().SerializeCompressed()
+
+	// Send it from Alice to Bob.
+	aliceMsg := &lnrpc.SendOnionMessageRequest{
+		Peer:    bob.PubKey[:],
+		PathKey: pathKey,
+		Onion:   buf.Bytes(),
+	}
+	alice.RPC.SendOnionMessage(aliceMsg)
+
+	// Dave should not receive the message because Carol is offline.
+	msg, err := assertOnionMessageReceived(ht, messages, carol.PubKey[:])
+	require.Error(ht, err)
+	require.Nil(ht, msg)
+}
+
 // blindedToSphinx converts the blinded path provided to a sphinx path that can
 // be wrapped up in an onion, encoding the TLV payload for each hop along the
 // way.
@@ -265,4 +402,24 @@ func createSphinxHop(nodeID btcec.PublicKey,
 			Payload: payloadTLVs,
 		},
 	}, nil
+}
+
+// assertOnionMessageReceived asserts that an onion message is received on the
+// provided channel and returns the message if it is received.
+func assertOnionMessageReceived(ht *lntest.HarnessTest,
+	messages <-chan *lnrpc.OnionMessageUpdate,
+	expectedPeer []byte) (*lnrpc.OnionMessageUpdate, error) {
+
+	ht.Helper()
+
+	select {
+	case msg := <-messages:
+		// Check that we're receiving the message from the expected
+		// peer.
+		require.Equal(ht, expectedPeer, msg.Peer)
+		return msg, nil
+
+	case <-time.After(lntest.DefaultTimeout):
+		return nil, fmt.Errorf("did not receive onion message")
+	}	
 }
