@@ -147,23 +147,16 @@ func testOnionMessageForwarding(ht *lntest.HarnessTest) {
 	}
 	alice.RPC.SendOnionMessage(aliceMsg)
 
-	// Wait for Carol to receive the message.
-	select {
-	case msg := <-messages:
-		// Check our type and data and (sanity) check the peer we got
-		// it from.
-		require.Equal(ht, bob.PubKey[:], msg.Peer, "msg peer wrong")
-		require.NotEmpty(ht, msg.CustomRecords)
-		customRecordsKey := uint64(lnwire.InvoiceRequestNamespaceType)
-		require.NotNil(ht, msg.CustomRecords[customRecordsKey])
-		require.Equal(
-			ht, []byte{1, 2, 3},
-			msg.CustomRecords[customRecordsKey],
-		)
+	msg, err := assertOnionMessageReceived(ht, messages, bob.PubKey[:])
+	require.NoError(ht, err)
 
-	case <-time.After(lntest.DefaultTimeout):
-		ht.Fatalf("carol did not receive onion message: %v", aliceMsg)
-	}
+	require.NotEmpty(ht, msg.CustomRecords)
+	customRecordsKey := uint64(lnwire.InvoiceRequestNamespaceType)
+	require.NotNil(ht, msg.CustomRecords[customRecordsKey])
+	require.Equal(
+		ht, []byte{1, 2, 3},
+		msg.CustomRecords[customRecordsKey],
+	)
 
 	ht.CloseChannel(alice, aliceBobChanPoint)
 	ht.CloseChannel(bob, bobCarolChanPoint)
