@@ -306,6 +306,269 @@ func testOnionMessageForwardingPeerOffline(ht *lntest.HarnessTest) {
 	require.Nil(ht, msg)
 }
 
+// testOnionMessageReplyPath tests that a reply path is correctly included in
+// an onion message and received by the final hop. We also test that the reply
+// path is used to send a reply message back to the sender node.
+//
+// nolint:ll
+func testOnionMessageReplyPath(ht *lntest.HarnessTest) {
+	// Spin up a three node network: Alice -> Bob -> Carol.
+	alice := ht.NewNodeWithCoins("Alice", nil)
+	bob := ht.NewNodeWithCoins("Bob", nil)
+	carol := ht.NewNode("Carol", nil)
+
+	// Connect nodes.
+	ht.ConnectNodesPerm(alice, bob)
+	ht.ConnectNodesPerm(bob, carol)
+
+	// Create a session key for the blinded path.
+	blindingKey, err := btcec.NewPrivateKey()
+	require.NoError(ht.T, err)
+
+	// Create a reply path. The reply path will be from Bob to Alice.
+	// So we need to create a blinded path that starts with Bob as the
+	// introduction node and ends with Alice as the final blinded hop.
+	replyBlindingKey, err := btcec.NewPrivateKey()
+	require.NoError(ht, err)
+
+	alicePubKey, err := btcec.ParsePubKey(alice.PubKey[:])
+	require.NoError(ht, err)
+
+	bobPubKey, err := btcec.ParsePubKey(bob.PubKey[:])
+	require.NoError(ht, err)
+
+	// Data for Bob (Introduction Node). Bob needs to know to forward to
+	// Alice.
+	replyDataBob := record.NewNonFinalBlindedRouteDataOnionMessage(
+		alicePubKey, nil, nil, nil,
+	)
+	encodedReplyDataBob, err := record.EncodeBlindedRouteData(replyDataBob)
+	require.NoError(ht, err)
+
+	// Data for Alice (final hop of reply path).
+	replyDataAlice := &record.BlindedRouteData{}
+	encReplyDataAlice, err := record.EncodeBlindedRouteData(replyDataAlice)
+	require.NoError(ht, err)
+
+	// Create the blinded hops.
+	hopsToBlindReply := []*sphinx.HopInfo{
+		{
+			NodePub:   bobPubKey,
+			PlainText: encodedReplyDataBob,
+		},
+		{
+			NodePub:   alicePubKey,
+			PlainText: encReplyDataAlice,
+		},
+	}
+
+	replyBlindedPath, err := sphinx.BuildBlindedPath(
+		replyBlindingKey, hopsToBlindReply,
+	)
+	require.NoError(ht, err)
+
+	// Convert sphinx.BlindedPath to lnwire.ReplyPath.
+	var replyHops []*lnwire.BlindedHop
+	for _, h := range replyBlindedPath.Path.BlindedHops {
+		replyHops = append(replyHops, &lnwire.BlindedHop{
+			BlindedNodeID: h.BlindedNodePub,
+			EncryptedData: h.CipherText,
+		})
+	}
+
+	bobPubKey, err = btcec.ParsePubKey(bob.PubKey[:])
+	require.NoError(ht, err)
+
+	replyPath := &lnwire.ReplyPath{
+		FirstNodeID:   bobPubKey,
+		BlindingPoint: replyBlindedPath.Path.BlindingPoint,
+		Hops:          replyHops,
+	}
+
+	// Create the forward path (Alice -> Bob -> Carol).
+	hopsToBlind := make([]*sphinx.HopInfo, 2)
+
+	carolPubKey, err := btcec.ParsePubKey(carol.PubKey[:])
+	require.NoError(ht, err)
+
+	data0 := record.NewNonFinalBlindedRouteDataOnionMessage(
+		carolPubKey, nil, nil, nil,
+	)
+	encoded0, err := record.EncodeBlindedRouteData(data0)
+	require.NoError(ht, err)
+
+	data1 := &record.BlindedRouteData{}
+	encoded1, err := record.EncodeBlindedRouteData(data1)
+	require.NoError(ht, err)
+
+	// The first hop is for Bob.
+	hopsToBlind[0] = &sphinx.HopInfo{
+		NodePub:   bobPubKey,
+		PlainText: encoded0,
+	}
+
+	// The second hop is to Carol.
+	hopsToBlind[1] = &sphinx.HopInfo{
+		NodePub:   carolPubKey,
+		PlainText: encoded1,
+	}
+
+	blindedPath, err := sphinx.BuildBlindedPath(blindingKey, hopsToBlind)
+	require.NoError(ht, err)
+
+	finalHopPayload := &lnwire.FinalHopPayload{
+		TLVType: lnwire.InvoiceRequestNamespaceType,
+		Value:   []byte{1, 2, 3},
+	}
+
+	// Embed Reply Path and Send. Convert the blinded path to a sphinx path,
+	// including the reply path.
+	sphinxPath, err := blindedToSphinx(
+		blindedPath.Path, nil, replyPath, []*lnwire.FinalHopPayload{
+			finalHopPayload,
+		},
+	)
+	require.NoError(ht, err)
+
+	// Create a session key for the onion packet.
+	sessionKey, err := btcec.NewPrivateKey()
+	require.NoError(ht, err)
+
+	// Create an onion packet with no associated data.
+	onionPacket, err := sphinx.NewOnionPacket(
+		sphinxPath, sessionKey, nil, sphinx.DeterministicPacketFiller,
+		sphinx.WithMaxPayloadSize(sphinx.MaxRoutingPayloadSize),
+	)
+	require.NoError(ht, err)
+
+	buf := new(bytes.Buffer)
+	err = onionPacket.Encode(buf)
+	require.NoError(ht, err)
+
+	// Subscribe Carol to onion messages.
+	msgClient, cancel := carol.RPC.SubscribeOnionMessages()
+	defer cancel()
+
+	// Create a channel to receive onion messages on.
+	messages := make(chan *lnrpc.OnionMessageUpdate)
+	go func() {
+		for {
+			msg, err := msgClient.Recv()
+			if err != nil {
+				return
+			}
+
+			select {
+			case messages <- msg:
+			case <-ht.Context().Done():
+				return
+			}
+		}
+	}()
+
+	pathKey := blindingKey.PubKey().SerializeCompressed()
+
+	// Send it from Alice to Bob.
+	aliceMsg := &lnrpc.SendOnionMessageRequest{
+		Peer:    bob.PubKey[:],
+		PathKey: pathKey,
+		Onion:   buf.Bytes(),
+	}
+	alice.RPC.SendOnionMessage(aliceMsg)
+
+	msg, err := assertOnionMessageReceived(ht, messages, bob.PubKey[:])
+	require.NoError(ht, err)
+
+	require.Equal(ht, bob.PubKey[:], msg.Peer)
+	require.NotNil(ht, msg.ReplyPath)
+
+	// Construct the sphinx blinded path from the reply path.
+	_, err = btcec.ParsePubKey(msg.ReplyPath.IntroductionNode)
+	require.NoError(ht, err)
+
+	blindingPointPub, err := btcec.ParsePubKey(msg.ReplyPath.BlindingPoint)
+	require.NoError(ht, err)
+
+	blindedHops := make([]*sphinx.BlindedHopInfo, len(msg.ReplyPath.BlindedHops))
+	for i, h := range msg.ReplyPath.BlindedHops {
+		pub, err := btcec.ParsePubKey(h.BlindedNode)
+		require.NoError(ht, err)
+
+		blindedHops[i] = &sphinx.BlindedHopInfo{
+			BlindedNodePub: pub,
+			CipherText:     h.EncryptedData,
+		}
+	}
+
+	sphinxReplyPath := &sphinx.BlindedPath{
+		BlindingPoint:    blindingPointPub,
+		BlindedHops:      blindedHops,
+	}
+
+	// Use the reply path to send a message back to Alice.
+	replyPayload := &lnwire.FinalHopPayload{
+		TLVType: lnwire.InvoiceRequestNamespaceType,
+		Value:   []byte{4, 5, 6},
+	}
+
+	replySphinxPath, err := blindedToSphinx(
+		sphinxReplyPath, nil, nil, []*lnwire.FinalHopPayload{
+			replyPayload,
+		},
+	)
+	require.NoError(ht, err)
+
+	// Create a new session key for the reply.
+	replySessionKey, err := btcec.NewPrivateKey()
+	require.NoError(ht, err)
+
+	replyOnionPacket, err := sphinx.NewOnionPacket(
+		replySphinxPath, replySessionKey, nil, sphinx.DeterministicPacketFiller,
+		sphinx.WithMaxPayloadSize(sphinx.MaxRoutingPayloadSize),
+	)
+	require.NoError(ht, err)
+
+	replyBuf := new(bytes.Buffer)
+	err = replyOnionPacket.Encode(replyBuf)
+	require.NoError(ht, err)
+
+	// Subscribe Alice to onion messages.
+	aliceMsgClient, aliceCancel := alice.RPC.SubscribeOnionMessages()
+	defer aliceCancel()
+
+	aliceMessages := make(chan *lnrpc.OnionMessageUpdate)
+	go func() {
+		for {
+			msg, err := aliceMsgClient.Recv()
+			if err != nil {
+				return
+			}
+			select {
+			case aliceMessages <- msg:
+			case <-ht.Context().Done():
+				return
+			}
+		}
+	}()
+
+	// Carol sends the reply to the introduction node (Bob) using the
+	// blinding point.
+	carolMsg := &lnrpc.SendOnionMessageRequest{
+		Peer:    msg.ReplyPath.IntroductionNode,
+		PathKey: msg.ReplyPath.BlindingPoint,
+		Onion:   replyBuf.Bytes(),
+	}
+	carol.RPC.SendOnionMessage(carolMsg)
+
+	// Verify Alice receives the reply.
+	replyMsg, err := assertOnionMessageReceived(ht, aliceMessages, bob.PubKey[:])
+	require.NoError(ht, err)
+
+	require.Equal(ht, bob.PubKey[:], replyMsg.Peer)
+	require.NotEmpty(ht, replyMsg.CustomRecords)
+	require.Equal(ht, []byte{4, 5, 6}, replyMsg.CustomRecords[uint64(lnwire.InvoiceRequestNamespaceType)])
+}
+
 // blindedToSphinx converts the blinded path provided to a sphinx path that can
 // be wrapped up in an onion, encoding the TLV payload for each hop along the
 // way.
