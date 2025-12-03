@@ -483,6 +483,9 @@ type Config struct {
 	// experimental accountability signals should be set.
 	ShouldFwdExpAccountability func() bool
 
+	// ActorSystem is the server wide actor system.
+	ActorSystem *actor.ActorSystem
+
 	// NoDisconnectOnPongFailure indicates whether the peer should *not* be
 	// disconnected if a pong is not received in time or is mismatched.
 	NoDisconnectOnPongFailure bool
@@ -656,6 +659,11 @@ type Brontide struct {
 	// msg router. If so, then we don't worry about stopping the msg router
 	// when a peer disconnects.
 	globalMsgRouter bool
+
+	// onionPeerActorRef is an optional actor ref that points to the onion
+	// actor created for this peer **only if** the remote peer supports
+	// onion messaging.
+	onionPeerActorRef fn.Option[onionmessage.OnionPeerActorRef]
 
 	startReady chan struct{}
 
@@ -1707,6 +1715,12 @@ func (p *Brontide) Disconnect(reason error) {
 			router.Stop()
 		})
 	}
+
+	// If we have an onion peer actor, stop and remove it from the actor
+	// system.
+	p.onionPeerActorRef.WhenSome(func(ref onionmessage.OnionPeerActorRef) {
+		p.cfg.ActorSystem.StopAndRemoveActor(ref.ID())
+	})
 }
 
 // String returns the string representation of this peer.
