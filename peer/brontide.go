@@ -651,8 +651,8 @@ type Brontide struct {
 	globalMsgRouter bool
 
 	// onionPeerActorRef is an optional actor ref that points to the onion
-	// actor created for this peer **only if** the remote peer supports
-	// onion messaging.
+	// actor created for this peer iff the remote peer supports onion
+	// messaging.
 	onionPeerActorRef fn.Option[onionmessage.OnionPeerActorRef]
 
 	startReady chan struct{}
