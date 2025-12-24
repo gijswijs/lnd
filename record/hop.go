@@ -42,21 +42,21 @@ const (
 	// blinded path to be used for replies.
 	ReplyPathType tlv.Type = 2
 
-	// EncryptedRecipientDataType is the type used in the onion message to
+	// EncryptedDataTLVType is the type used in the onion message to
 	// include encrypted data in the onion for use in blinded paths.
-	EncryptedRecipientDataType tlv.Type = 4
+	EncryptedDataTLVType tlv.Type = 4
 
-	// InvoiceRequestType is the type used in the onion message to include
-	// invoice requests.
-	InvoiceRequestType tlv.Type = 64
+	// InvoiceRequestNamespaceType is the type used in the onion message to
+	// include invoice requests.
+	InvoiceRequestNamespaceType tlv.Type = 64
 
-	// InvoiceType is the type used in the onion message to include
+	// InvoiceNamespaceType is the type used in the onion message to include
 	// invoices.
-	InvoiceType tlv.Type = 66
+	InvoiceNamespaceType tlv.Type = 66
 
-	// InvoiceErrorType is the type used in the onion message to include
-	// invoice errors.
-	InvoiceErrorType tlv.Type = 68
+	// InvoiceErrorNamespaceType is the type used in the onion message to
+	// include invoice errors.
+	InvoiceErrorNamespaceType tlv.Type = 68
 )
 
 // NewAmtToFwdRecord creates a tlv.Record that encodes the amount_to_forward
@@ -96,7 +96,7 @@ func NewEncryptedDataRecord(data *[]byte) tlv.Record {
 // NewEncryptedRecipientDataRecord creates a tlv.Record that encodes the
 // encrypted_data (type 4) record for an onion message payload.
 func NewEncryptedRecipientDataRecord(data *[]byte) tlv.Record {
-	return tlv.MakePrimitiveRecord(EncryptedRecipientDataType, data)
+	return tlv.MakePrimitiveRecord(EncryptedDataTLVType, data)
 }
 
 // NewReplyPathRecord creates a tlv.Record that encodes the reply_path (type 2)
@@ -108,19 +108,19 @@ func NewReplyPathRecord(data *[]byte) tlv.Record {
 // NewInvoiceRequestRecord creates a tlv.Record that encodes the
 // invoice_request (type 64) record for an onion message payload.
 func NewInvoiceRequestRecord(data *[]byte) tlv.Record {
-	return tlv.MakePrimitiveRecord(InvoiceRequestType, data)
+	return tlv.MakePrimitiveRecord(InvoiceRequestNamespaceType, data)
 }
 
 // NewInvoiceRecord creates a tlv.Record that encodes the
 // invoice (type 66) record for an onion message payload.
 func NewInvoiceRecord(data *[]byte) tlv.Record {
-	return tlv.MakePrimitiveRecord(InvoiceType, data)
+	return tlv.MakePrimitiveRecord(InvoiceNamespaceType, data)
 }
 
 // NewInvoiceErrorRecord creates a tlv.Record that encodes the
 // invoice_error (type 68) record for an onion message payload.
 func NewInvoiceErrorRecord(data *[]byte) tlv.Record {
-	return tlv.MakePrimitiveRecord(InvoiceErrorType, data)
+	return tlv.MakePrimitiveRecord(InvoiceErrorNamespaceType, data)
 }
 
 // NewBlindingPointRecord creates a tlv.Record that encodes the blinding_point

@@ -71,7 +71,7 @@ func processOnionMessage(router *sphinx.Router, resolver NodeIDResolver,
 	}
 
 	payload := lnwire.NewOnionMessagePayload()
-	payload, _, err = payload.Decode(
+	_, err = payload.Decode(
 		bytes.NewReader(processedPkt.Payload.Payload),
 	)
 	if err != nil {

@@ -76,14 +76,14 @@ func ConcatBlindedPaths(t *testing.T, senderPath,
 // the message along with the ciphertexts for each blinded hop (in hop order).
 // If finalPayloads is nil or empty, no final hop payload data is included.
 func BuildOnionMessage(t *testing.T, blindedPath *sphinx.BlindedPathInfo,
-	finalPayloads []*lnwire.FinalHopPayload) (*lnwire.OnionMessage,
+	finalHopTLVs []*lnwire.FinalHopTLV) (*lnwire.OnionMessage,
 	[][]byte) {
 
 	t.Helper()
 
 	// Convert the blinded path to a sphinx path and add final payloads.
 	sphinxPath, err := route.OnionMessageBlindedPathToSphinxPath(
-		blindedPath.Path, nil, finalPayloads,
+		blindedPath.Path, nil, finalHopTLVs,
 	)
 	require.NoError(t, err)
 

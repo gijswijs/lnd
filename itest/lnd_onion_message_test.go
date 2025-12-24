@@ -67,7 +67,7 @@ func testOnionMessage(ht *lntest.HarnessTest) {
 	blindedPath := testhelpers.BuildBlindedPath(ht.T, hops)
 
 	// Add a custom payload to verify it's received correctly.
-	finalPayloads := []*lnwire.FinalHopPayload{
+	finalHopTLVs := []*lnwire.FinalHopTLV{
 		{
 			TLVType: lnwire.InvoiceRequestNamespaceType,
 			Value:   []byte{1, 2, 3},
@@ -75,7 +75,7 @@ func testOnionMessage(ht *lntest.HarnessTest) {
 	}
 
 	onionMsg, _ := testhelpers.BuildOnionMessage(
-		ht.T, blindedPath, finalPayloads,
+		ht.T, blindedPath, finalHopTLVs,
 	)
 
 	// Send it from Bob to Alice.

@@ -11,6 +11,7 @@ type GraphNodeResolver struct {
 	OurPub *btcec.PublicKey
 }
 
+// RemotePubFromSCID resolves a node public key from a short channel ID.
 func (r *GraphNodeResolver) RemotePubFromSCID(scid lnwire.ShortChannelID,
 ) (*btcec.PublicKey, error) {
 

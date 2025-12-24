@@ -49,7 +49,7 @@ func PeelOnionLayers(t *testing.T, privKeys []*btcec.PrivateKey,
 		require.NoError(t, err)
 
 		payload := lnwire.NewOnionMessagePayload()
-		payload, _, err = payload.Decode(
+		_, err = payload.Decode(
 			bytes.NewReader(processedPkt.Payload.Payload),
 		)
 		require.NoError(t, err)

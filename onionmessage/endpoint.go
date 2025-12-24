@@ -39,12 +39,12 @@ type OnionMessageUpdate struct {
 	CustomRecords record.CustomSet
 
 	// ReplyPath contains the reply path information for the onion message.
-	ReplyPath *lnwire.ReplyPath
+	ReplyPath *sphinx.BlindedPath
 
 	// EncryptedRecipientData contains the encrypted recipient data for the
 	// onion message, created by the creator of the blinded route. This is
 	// the receiver for the last leg of the route, and the sender for the
-	// first leg uyp to the introduction point.
+	// first leg up to the introduction point.
 	EncryptedRecipientData []byte
 }
 
@@ -202,7 +202,7 @@ func (o *OnionEndpoint) SendMessage(ctx context.Context,
 	// If we have a payload, add its contents to our update.
 	if payload != nil {
 		customRecords := make(record.CustomSet)
-		for _, v := range payload.FinalHopPayloads {
+		for _, v := range payload.FinalHopTLVs {
 			customRecords[uint64(v.TLVType)] = v.Value
 		}
 		update.CustomRecords = customRecords

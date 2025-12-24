@@ -11,9 +11,9 @@ import (
 // OnionMessageBlindedPathToSphinxPath converts a complete blinded path intended
 // for sending an onion message to a PaymentPath that contains the per-hop
 // payloads used to encoding the routing data for each hop in the route. This
-// method also accepts an optional EOB payload for the final hop.
+// method also accepts final hop payloads.
 func OnionMessageBlindedPathToSphinxPath(blindedPath *sphinx.BlindedPath,
-	replyPath *lnwire.ReplyPath, finalPayloads []*lnwire.FinalHopPayload) (
+	replyPath *sphinx.BlindedPath, finalHopTLVs []*lnwire.FinalHopTLV) (
 	*sphinx.PaymentPath, error) {
 
 	var path sphinx.PaymentPath
@@ -45,7 +45,7 @@ func OnionMessageBlindedPathToSphinxPath(blindedPath *sphinx.BlindedPath,
 		// final hop and the reply path (if provided).
 		finalHop := i == len(blindedPath.BlindedHops)-1
 		if finalHop {
-			onionMessagePayload.FinalHopPayloads = finalPayloads
+			onionMessagePayload.FinalHopTLVs = finalHopTLVs
 			onionMessagePayload.ReplyPath = replyPath
 		}
 

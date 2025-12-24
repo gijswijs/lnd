@@ -459,7 +459,7 @@ func TestOnionEndpointSendMessageRouting(t *testing.T) {
 	tests := []struct {
 		name         string
 		buildHops    buildHopsFunc
-		finalPayload []*lnwire.FinalHopPayload
+		finalHopTLVs []*lnwire.FinalHopTLV
 	}{
 		{
 			name:      "forward next node",
@@ -472,7 +472,7 @@ func TestOnionEndpointSendMessageRouting(t *testing.T) {
 		{
 			name:      "deliver",
 			buildHops: buildDeliverHops,
-			finalPayload: []*lnwire.FinalHopPayload{
+			finalHopTLVs: []*lnwire.FinalHopTLV{
 				{
 					TLVType: customTLVType,
 					Value:   []byte{1, 2, 3},
@@ -496,7 +496,7 @@ func TestOnionEndpointSendMessageRouting(t *testing.T) {
 
 			result := tc.buildHops(t, h)
 			onionMsg, cipherTexts := testhelpers.BuildOnionMessage(
-				t, result.blindedPath, tc.finalPayload,
+				t, result.blindedPath, tc.finalHopTLVs,
 			)
 
 			// The introduction point is the first hop that will
@@ -532,10 +532,10 @@ func TestOnionEndpointSendMessageRouting(t *testing.T) {
 				)
 			}
 
-			for _, fp := range tc.finalPayload {
-				TLVType := fp.TLVType
+			for _, fht := range tc.finalHopTLVs {
+				TLVType := fht.TLVType
 				require.Equal(
-					t, fp.Value,
+					t, fht.Value,
 					update.CustomRecords[uint64(TLVType)],
 				)
 			}
