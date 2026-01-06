@@ -376,9 +376,9 @@ type server struct {
 
 	chainArb *contractcourt.ChainArbitrator
 
-	sphinx *hop.OnionProcessor
+	sphinxPayment *hop.OnionProcessor
 
-	sphinxRouterNoReplayLog *sphinx.Router
+	sphinxOnionMsg *sphinx.Router
 
 	towerClientMgr *wtclient.Manager
 
@@ -614,7 +614,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 	// TODO(gijs): remove the memory replay log once lightning-onion
 	// supports it.
-	sphinxRouterNoReplayLog := sphinx.NewRouter(
+	sphinxOnionMsg := sphinx.NewRouter(
 		nodeKeyECDH, sphinx.NewMemoryReplayLog(),
 	)
 
@@ -714,8 +714,8 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 
 		// TODO(roasbeef): derive proper onion key based on rotation
 		// schedule
-		sphinx:                  hop.NewOnionProcessor(sphinxRouter),
-		sphinxRouterNoReplayLog: sphinxRouterNoReplayLog,
+		sphinxPayment:  hop.NewOnionProcessor(sphinxRouter),
+		sphinxOnionMsg: sphinxOnionMsg,
 
 		torController: torController,
 
@@ -804,7 +804,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		},
 		FwdingLog:              dbs.ChanStateDB.ForwardingLog(),
 		SwitchPackager:         channeldb.NewSwitchPackager(),
-		ExtractErrorEncrypter:  s.sphinx.ExtractErrorEncrypter,
+		ExtractErrorEncrypter:  s.sphinxPayment.ExtractErrorEncrypter,
 		FetchLastChannelUpdate: s.fetchLastChanUpdate(),
 		Notifier:               s.cc.ChainNotifier,
 		HtlcNotifier:           s.htlcNotifier,
@@ -1353,7 +1353,7 @@ func newServer(ctx context.Context, cfg *Config, listenAddrs []net.Addr,
 		Registry:                      s.invoices,
 		NotifyClosedChannel:           s.channelNotifier.NotifyClosedChannelEvent,
 		NotifyFullyResolvedChannel:    s.channelNotifier.NotifyFullyResolvedChannelEvent,
-		OnionProcessor:                s.sphinx,
+		OnionProcessor:                s.sphinxPayment,
 		PaymentsExpirationGracePeriod: cfg.PaymentsExpirationGracePeriod,
 		IsForwardedHTLC:               s.htlcSwitch.IsForwardedHTLC,
 		Clock:                         clock.NewDefaultClock(),
@@ -2354,17 +2354,17 @@ func (s *server) Start(ctx context.Context) error {
 			return
 		}
 
-		cleanup = cleanup.add(s.sphinx.Stop)
-		if err := s.sphinx.Start(); err != nil {
+		cleanup = cleanup.add(s.sphinxPayment.Stop)
+		if err := s.sphinxPayment.Start(); err != nil {
 			startErr = err
 			return
 		}
 
 		cleanup = cleanup.add(func() error {
-			s.sphinxRouterNoReplayLog.Stop()
+			s.sphinxOnionMsg.Stop()
 			return nil
 		})
-		if err := s.sphinxRouterNoReplayLog.Start(); err != nil {
+		if err := s.sphinxOnionMsg.Start(); err != nil {
 			startErr = err
 			return
 		}
@@ -2637,7 +2637,7 @@ func (s *server) Stop() error {
 		s.blockbeatDispatcher.Stop()
 
 		// Shutdown the onion router for onion messaging.
-		s.sphinxRouterNoReplayLog.Stop()
+		s.sphinxOnionMsg.Stop()
 
 		// Shutdown the actor system to stop all actors.
 		if err := s.actorSystem.Shutdown(); err != nil {
@@ -2651,7 +2651,7 @@ func (s *server) Stop() error {
 		if err := s.htlcSwitch.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop htlcSwitch: %v", err)
 		}
-		if err := s.sphinx.Stop(); err != nil {
+		if err := s.sphinxPayment.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop sphinx: %v", err)
 		}
 		if err := s.invoices.Stop(); err != nil {
@@ -4436,8 +4436,8 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		ChainNotifier:           s.cc.ChainNotifier,
 		BestBlockView:           s.cc.BestBlockTracker,
 		RoutingPolicy:           s.cc.RoutingPolicy,
-		Sphinx:                  s.sphinx,
-		SphinxRouterNoReplayLog: s.sphinxRouterNoReplayLog,
+		SphinxPayment:           s.sphinxPayment,
+		SphinxOnionMsg:          s.sphinxOnionMsg,
 		WitnessBeacon:           s.witnessBeacon,
 		Invoices:                s.invoices,
 		ChannelNotifier:         s.channelNotifier,

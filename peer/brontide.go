@@ -302,13 +302,13 @@ type Config struct {
 	// the Brontide.
 	RoutingPolicy models.ForwardingPolicy
 
-	// Sphinx is used when setting up ChannelLinks so they can decode sphinx
-	// onion blobs.
-	Sphinx *hop.OnionProcessor
+	// SphinxPayment is used when setting up ChannelLinks so they can decode
+	// sphinx onion blobs.
+	SphinxPayment *hop.OnionProcessor
 
-	// SphinxRouterNoReplayLog is the router used to decode sphinx onion
-	// blobs from an onion_message_packet.
-	SphinxRouterNoReplayLog *sphinx.Router
+	// SphinxOnionMsg is the router used to decode sphinx onion blobs from
+	// an onion_message_packet.
+	SphinxOnionMsg *sphinx.Router
 
 	// WitnessBeacon is used when setting up ChannelLinks so they can add any
 	// preimages that they learn.
@@ -948,7 +948,7 @@ func (p *Brontide) Start() error {
 	}
 	onionMessageEndpoint, err := onionmessage.NewOnionEndpoint(
 		p.cfg.ActorSystem.Receptionist(),
-		p.cfg.SphinxRouterNoReplayLog,
+		p.cfg.SphinxOnionMsg,
 		resolver,
 		onionmessage.WithMessageServer(p.cfg.OnionMessageServer),
 	)
@@ -1489,8 +1489,8 @@ func (p *Brontide) addLink(chanPoint *wire.OutPoint,
 	//nolint:ll
 	linkCfg := htlcswitch.ChannelLinkConfig{
 		Peer:                   p,
-		DecodeHopIterators:     p.cfg.Sphinx.DecodeHopIterators,
-		ExtractErrorEncrypter:  p.cfg.Sphinx.ExtractErrorEncrypter,
+		DecodeHopIterators:     p.cfg.SphinxPayment.DecodeHopIterators,
+		ExtractErrorEncrypter:  p.cfg.SphinxPayment.ExtractErrorEncrypter,
 		FetchLastChannelUpdate: p.cfg.FetchLastChanUpdate,
 		HodlMask:               p.cfg.Hodl.Mask(),
 		Registry:               p.cfg.Invoices,
