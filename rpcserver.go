@@ -9403,13 +9403,13 @@ func (r *rpcServer) SubscribeOnionMessages(
 
 			//nolint:ll
 			if oMsg.ReplyPath != nil {
-				bp.IntroductionNode = oMsg.ReplyPath.FirstNodeID.SerializeCompressed()
+				bp.IntroductionNode = oMsg.ReplyPath.IntroductionPoint.SerializeCompressed()
 				bp.BlindingPoint = oMsg.ReplyPath.BlindingPoint.SerializeCompressed()
 
-				for _, hop := range oMsg.ReplyPath.Hops {
+				for _, hop := range oMsg.ReplyPath.BlindedHops {
 					rpcHop := &lnrpc.BlindedHop{
-						BlindedNode:   hop.BlindedNodeID.SerializeCompressed(),
-						EncryptedData: hop.EncryptedData,
+						BlindedNode:   hop.BlindedNodePub.SerializeCompressed(),
+						EncryptedData: hop.CipherText,
 					}
 					bp.BlindedHops = append(bp.BlindedHops, rpcHop)
 				}
