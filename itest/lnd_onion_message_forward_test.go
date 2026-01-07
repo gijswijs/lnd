@@ -30,7 +30,7 @@ type onionMessageTestCase struct {
 	buildPath func(ht *lntest.HarnessTest, alice, bob,
 		carol *node.HarnessNode) (
 		blindedPath *sphinx.BlindedPathInfo,
-		finalPayloads []*lnwire.FinalHopPayload,
+		finalHopTLVs []*lnwire.FinalHopTLV,
 		firstHop *node.HarnessNode,
 		expectedPeer []byte,
 	)
@@ -55,7 +55,7 @@ func testOnionMessageForwarding(ht *lntest.HarnessTest) {
 			buildPath: func(ht *lntest.HarnessTest, alice, bob,
 				carol *node.HarnessNode) (
 				*sphinx.BlindedPathInfo,
-				[]*lnwire.FinalHopPayload,
+				[]*lnwire.FinalHopTLV,
 				*node.HarnessNode, []byte,
 			) {
 
@@ -83,7 +83,7 @@ func testOnionMessageForwarding(ht *lntest.HarnessTest) {
 			buildPath: func(ht *lntest.HarnessTest, alice, bob,
 				carol *node.HarnessNode) (
 				*sphinx.BlindedPathInfo,
-				[]*lnwire.FinalHopPayload,
+				[]*lnwire.FinalHopTLV,
 				*node.HarnessNode, []byte,
 			) {
 
@@ -172,7 +172,7 @@ func testOnionMessageForwarding(ht *lntest.HarnessTest) {
 // next node ID. Path: Alice -> Bob -> Carol.
 func buildForwardNextNodePath(ht *lntest.HarnessTest, bob,
 	carol *node.HarnessNode) (
-	*sphinx.BlindedPathInfo, []*lnwire.FinalHopPayload,
+	*sphinx.BlindedPathInfo, []*lnwire.FinalHopTLV,
 	*node.HarnessNode, []byte,
 ) {
 
@@ -210,14 +210,14 @@ func buildForwardNextNodePath(ht *lntest.HarnessTest, bob,
 
 	blindedPath := testhelpers.BuildBlindedPath(ht.T, hops)
 
-	finalPayloads := []*lnwire.FinalHopPayload{
+	finalHopTLVs := []*lnwire.FinalHopTLV{
 		{
 			TLVType: lnwire.InvoiceRequestNamespaceType,
 			Value:   []byte{1, 2, 3},
 		},
 	}
 
-	return blindedPath, finalPayloads, bob, bob.PubKey[:]
+	return blindedPath, finalHopTLVs, bob, bob.PubKey[:]
 }
 
 // buildForwardSCIDPath builds a blinded path for forwarding via SCID.
@@ -225,7 +225,7 @@ func buildForwardNextNodePath(ht *lntest.HarnessTest, bob,
 // Path: Alice -> Bob -> Carol (Bob uses SCID to identify Carol).
 func buildForwardSCIDPath(ht *lntest.HarnessTest, bob,
 	carol *node.HarnessNode) (
-	*sphinx.BlindedPathInfo, []*lnwire.FinalHopPayload,
+	*sphinx.BlindedPathInfo, []*lnwire.FinalHopTLV,
 	*node.HarnessNode, []byte,
 ) {
 
@@ -268,14 +268,14 @@ func buildForwardSCIDPath(ht *lntest.HarnessTest, bob,
 
 	blindedPath := testhelpers.BuildBlindedPath(ht.T, hops)
 
-	finalPayloads := []*lnwire.FinalHopPayload{
+	finalHopTLVs := []*lnwire.FinalHopTLV{
 		{
 			TLVType: lnwire.InvoiceRequestNamespaceType,
 			Value:   []byte{4, 5, 6},
 		},
 	}
 
-	return blindedPath, finalPayloads, bob, bob.PubKey[:]
+	return blindedPath, finalHopTLVs, bob, bob.PubKey[:]
 }
 
 // buildConcatenatedPath builds a concatenated blinded path scenario.
@@ -284,7 +284,7 @@ func buildForwardSCIDPath(ht *lntest.HarnessTest, bob,
 // Path: Alice -> Bob (intro) -> Carol.
 func buildConcatenatedPath(ht *lntest.HarnessTest, alice, bob,
 	carol *node.HarnessNode) (
-	*sphinx.BlindedPathInfo, []*lnwire.FinalHopPayload,
+	*sphinx.BlindedPathInfo, []*lnwire.FinalHopTLV,
 	*node.HarnessNode, []byte,
 ) {
 
@@ -332,12 +332,12 @@ func buildConcatenatedPath(ht *lntest.HarnessTest, alice, bob,
 		ht.T, senderPath, receiverPath,
 	)
 
-	finalPayloads := []*lnwire.FinalHopPayload{
+	finalHopTLVs := []*lnwire.FinalHopTLV{
 		{
 			TLVType: lnwire.InvoiceRequestNamespaceType,
 			Value:   []byte{7, 8, 9},
 		},
 	}
 
-	return concatenatedPath, finalPayloads, bob, bob.PubKey[:]
+	return concatenatedPath, finalHopTLVs, bob, bob.PubKey[:]
 }
