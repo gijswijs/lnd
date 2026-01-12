@@ -341,3 +341,181 @@ func buildConcatenatedPath(ht *lntest.HarnessTest, alice, bob,
 
 	return concatenatedPath, finalHopTLVs, bob, bob.PubKey[:]
 }
+
+// testOnionMessageWithReplyPath tests that an onion message with a reply path
+// is correctly received and can be used to send a response. This test uses
+// three nodes: Alice sends to Carol via Bob, including a reply path. Carol
+// then uses the reply path to send a response back to Alice via Bob.
+func testOnionMessageWithReplyPath(ht *lntest.HarnessTest) {
+	// Create three nodes for a proper forwarding test.
+	alice := ht.NewNode("Alice", nil)
+	bob := ht.NewNode("Bob", nil)
+	carol := ht.NewNode("Carol", nil)
+
+	// Connect nodes in a chain: Alice <-> Bob <-> Carol.
+	ht.EnsureConnected(alice, bob)
+	ht.EnsureConnected(bob, carol)
+
+	// Subscribe both Alice and Carol to onion messages.
+	aliceMsgClient, aliceCancel := alice.RPC.SubscribeOnionMessages()
+	defer aliceCancel()
+
+	carolMsgClient, carolCancel := carol.RPC.SubscribeOnionMessages()
+	defer carolCancel()
+
+	// Create channels to receive onion messages.
+	aliceMessages := make(chan *lnrpc.OnionMessageUpdate)
+	go func() {
+		for {
+			msg, err := aliceMsgClient.Recv()
+			if err != nil {
+				return
+			}
+			select {
+			case aliceMessages <- msg:
+			case <-ht.Context().Done():
+				return
+			}
+		}
+	}()
+
+	carolMessages := make(chan *lnrpc.OnionMessageUpdate)
+	go func() {
+		for {
+			msg, err := carolMsgClient.Recv()
+			if err != nil {
+				return
+			}
+			select {
+			case carolMessages <- msg:
+			case <-ht.Context().Done():
+				return
+			}
+		}
+	}()
+
+	// Build the forward path: Alice -> Bob -> Carol.
+	forwardPath, _, _, _ := buildForwardNextNodePath(ht, bob, carol)
+
+	// Build the reply path: Carol -> Bob -> Alice.
+	replyPathInfo, _, _, _ := buildForwardNextNodePath(ht, bob, alice)
+
+	// Build the onion message with a custom payload and reply path.
+	initialPayload := []*lnwire.FinalHopTLV{
+		{
+			TLVType: lnwire.InvoiceRequestNamespaceType,
+			Value:   []byte("hello carol"),
+		},
+	}
+
+	onionMsg, _ := testhelpers.BuildOnionMessageWithReplyPath(
+		ht.T, forwardPath, replyPathInfo.Path, initialPayload,
+	)
+
+	// Send from Alice to Bob (first hop of path to Carol).
+	pathKey := forwardPath.SessionKey.PubKey().SerializeCompressed()
+	alice.RPC.SendOnionMessage(&lnrpc.SendOnionMessageRequest{
+		Peer:    bob.PubKey[:],
+		PathKey: pathKey,
+		Onion:   onionMsg.OnionBlob,
+	})
+
+	// Wait for Carol to receive the message.
+	var receivedReplyPath *lnrpc.BlindedPath
+	select {
+	case msg := <-carolMessages:
+		// Verify Carol received the message from Bob.
+		require.Equal(ht, bob.PubKey[:], msg.Peer, "wrong carol peer")
+
+		// Verify the reply path is present.
+		require.NotNil(ht, msg.ReplyPath, "carol expected reply path")
+		receivedReplyPath = msg.ReplyPath
+
+		// Verify reply path structure.
+		replyIntroPoint := replyPathInfo.Path.IntroductionPoint
+		require.Equal(
+			ht,
+			replyIntroPoint.SerializeCompressed(),
+			msg.ReplyPath.IntroductionNode,
+			"reply path introduction node mismatch",
+		)
+		require.Len(ht, msg.ReplyPath.BlindedHops, 2,
+			"expected two hops in reply path")
+
+	case <-time.After(lntest.DefaultTimeout):
+		ht.Fatalf("carol did not receive onion message")
+	}
+
+	// Now Carol uses the reply path to send a response back to Alice.
+	// Build the reply message using the received reply path.
+	replyPayload := []*lnwire.FinalHopTLV{
+		{
+			TLVType: lnwire.InvoiceNamespaceType,
+			Value:   []byte("hi alice"),
+		},
+	}
+
+	// Convert the RPC reply path back to sphinx.BlindedPath.
+	introNode, err := btcec.ParsePubKey(receivedReplyPath.IntroductionNode)
+	require.NoError(ht.T, err)
+
+	blindingPoint, err := btcec.ParsePubKey(receivedReplyPath.BlindingPoint)
+	require.NoError(ht.T, err)
+
+	var blindedHops []*sphinx.BlindedHopInfo
+	for _, rpcHop := range receivedReplyPath.BlindedHops {
+		blindedNode, err := btcec.ParsePubKey(rpcHop.BlindedNode)
+		require.NoError(ht.T, err)
+
+		blindedHops = append(blindedHops, &sphinx.BlindedHopInfo{
+			BlindedNodePub: blindedNode,
+			CipherText:     rpcHop.EncryptedData,
+		})
+	}
+
+	reconstructedReplyPath := &sphinx.BlindedPath{
+		IntroductionPoint: introNode,
+		BlindingPoint:     blindingPoint,
+		BlindedHops:       blindedHops,
+	}
+
+	// Build an onion message using the reply path.
+	replyBlindedPathInfo := &sphinx.BlindedPathInfo{
+		Path:       reconstructedReplyPath,
+		SessionKey: replyPathInfo.SessionKey,
+	}
+
+	replyOnionMsg, _ := testhelpers.BuildOnionMessage(
+		ht.T, replyBlindedPathInfo, replyPayload,
+	)
+
+	// Carol sends the reply to Bob (introduction node of the reply path).
+	replyPathKey := replyPathInfo.SessionKey.PubKey().SerializeCompressed()
+	carol.RPC.SendOnionMessage(&lnrpc.SendOnionMessageRequest{
+		Peer:    bob.PubKey[:],
+		PathKey: replyPathKey,
+		Onion:   replyOnionMsg.OnionBlob,
+	})
+
+	// Wait for Alice to receive the reply.
+	select {
+	case msg := <-aliceMessages:
+		// Verify Alice received the message from Bob.
+		require.Equal(ht, bob.PubKey[:], msg.Peer, "wrong alice peer")
+
+		// Verify the reply payload was received.
+		require.Contains(
+			ht, msg.CustomRecords,
+			uint64(lnwire.InvoiceNamespaceType),
+			"alice expected reply payload",
+		)
+		require.Equal(
+			ht, []byte("hi alice"),
+			msg.CustomRecords[uint64(lnwire.InvoiceNamespaceType)],
+			"reply payload mismatch",
+		)
+
+	case <-time.After(lntest.DefaultTimeout):
+		ht.Fatalf("alice did not receive reply via reply path")
+	}
+}

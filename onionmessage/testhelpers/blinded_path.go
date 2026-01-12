@@ -81,9 +81,22 @@ func BuildOnionMessage(t *testing.T, blindedPath *sphinx.BlindedPathInfo,
 
 	t.Helper()
 
+	return BuildOnionMessageWithReplyPath(
+		t, blindedPath, nil, finalHopTLVs,
+	)
+}
+
+// BuildOnionMessageWithReplyPath builds an onion message with an optional
+// reply path. The reply path is included in the final hop's payload.
+func BuildOnionMessageWithReplyPath(t *testing.T,
+	blindedPath *sphinx.BlindedPathInfo, replyPath *sphinx.BlindedPath,
+	finalHopTLVs []*lnwire.FinalHopTLV) (*lnwire.OnionMessage, [][]byte) {
+
+	t.Helper()
+
 	// Convert the blinded path to a sphinx path and add final payloads.
 	sphinxPath, err := route.OnionMessageBlindedPathToSphinxPath(
-		blindedPath.Path, nil, finalHopTLVs,
+		blindedPath.Path, replyPath, finalHopTLVs,
 	)
 	require.NoError(t, err)
 
