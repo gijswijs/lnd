@@ -336,6 +336,9 @@ func DefaultOnionActorOpts() []actor.ActorOption[*Request, *Response] {
 
 		return actor.NewBackpressureMailbox[*Request, *Response](
 			ctx, capacity, shouldDrop,
+			actor.BackpressureMailboxCfg{
+				Name: "onion-message",
+			},
 		)
 	}
 
